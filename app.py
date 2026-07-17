@@ -9,26 +9,32 @@ Design: the server is the shared "brain" only.
 - BYOK: the caller sends their own Gemini key in `X-Gemini-Key`; the server
   never pays for inference and stores nothing.
 
-The clipnote core is imported from CLIPNOTE_PATH (default: ../clipnote).
+The clipnote core is used as an installed package (`pip install clipnote`),
+with a repo fallback via CLIPNOTE_PATH (default: ../clipnote).
 """
 import os
 import sys
 import tempfile
 from pathlib import Path
 
-CLIPNOTE_PATH = Path(os.environ.get(
-    "CLIPNOTE_PATH", Path(__file__).parent.parent / "clipnote")).resolve()
-if not (CLIPNOTE_PATH / "analyze.py").exists():
-    raise RuntimeError(f"clipnote core not found at {CLIPNOTE_PATH}; set CLIPNOTE_PATH")
-sys.path.insert(0, str(CLIPNOTE_PATH))
+try:
+    import clipnote  # noqa: F401  (pip-installed package)
+except ImportError:
+    CLIPNOTE_PATH = Path(os.environ.get(
+        "CLIPNOTE_PATH", Path(__file__).parent.parent / "clipnote")).resolve()
+    if not (CLIPNOTE_PATH / "src" / "clipnote" / "analyze.py").exists():
+        raise RuntimeError(
+            f"clipnote package not importable and repo not at {CLIPNOTE_PATH}; "
+            "pip install clipnote or set CLIPNOTE_PATH")
+    sys.path.insert(0, str(CLIPNOTE_PATH / "src"))
 
 from fastapi import FastAPI, Header, HTTPException  # noqa: E402
 from pydantic import BaseModel, Field  # noqa: E402
 
-import analyze as core_analyze  # noqa: E402
-import render as core_render  # noqa: E402
-from common import video_id  # noqa: E402
-from contract import validate  # noqa: E402
+from clipnote import analyze as core_analyze  # noqa: E402
+from clipnote import render as core_render  # noqa: E402
+from clipnote.common import video_id  # noqa: E402
+from clipnote.contract import validate  # noqa: E402
 
 app = FastAPI(title="clipnote-server", version="0.1.0")
 
@@ -60,7 +66,8 @@ def require_key(x_gemini_key: str | None) -> str:
 
 @app.get("/healthz")
 def healthz():
-    return {"status": "ok", "core": str(CLIPNOTE_PATH)}
+    import clipnote as core
+    return {"status": "ok", "core": str(Path(core.__file__).parent)}
 
 
 @app.post("/v1/analyze")

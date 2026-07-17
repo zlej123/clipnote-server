@@ -40,7 +40,7 @@ Guides without an `image_refs` entry fall back to YouTube timestamp links.
 
 ```bash
 pip install -r requirements.txt
-export CLIPNOTE_PATH=/path/to/clipnote   # core location (default: ../clipnote)
+pip install "git+https://github.com/zlej123/clipnote"   # or: pip install -e ../clipnote
 python app.py                             # http://127.0.0.1:8787
 ```
 

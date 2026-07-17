@@ -4,8 +4,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends git \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /srv
-RUN git clone --depth 1 https://github.com/zlej123/clipnote /opt/clipnote
-ENV CLIPNOTE_PATH=/opt/clipnote
+RUN pip install --no-cache-dir "git+https://github.com/zlej123/clipnote"
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
