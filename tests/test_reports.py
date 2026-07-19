@@ -4,6 +4,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -79,12 +80,17 @@ class GithubIssueBridgeTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         os.environ["CLIPNOTE_REPORTS"] = self.tmp.name
+        # Defensive: the gh-path tests below assume no token is set, so a leaked
+        # GITHUB_TOKEN (e.g. from a CI runner's own auth) can't make them silently
+        # take the token path instead of exercising subprocess.run.
+        os.environ.pop("GITHUB_TOKEN", None)
         import app  # noqa: WPS433 — env 설정 후 임포트
         self.client = TestClient(app.app)
 
     def tearDown(self):
         os.environ.pop("CLIPNOTE_REPORTS", None)
         os.environ.pop("CLIPNOTE_REPORTS_REPO", None)
+        os.environ.pop("GITHUB_TOKEN", None)
         self.tmp.cleanup()
 
     @patch("app.subprocess.run")
@@ -134,6 +140,54 @@ class GithubIssueBridgeTests(unittest.TestCase):
 
         self.assertEqual(200, response.status_code)
         self.assertEqual("failed", response.json()["github"])
+
+    def test_token_path_posts_via_urllib(self):
+        os.environ["CLIPNOTE_REPORTS_REPO"] = "zlej123/clipnote-reports"
+        os.environ["GITHUB_TOKEN"] = "test-token"
+        try:
+            captured = {}
+
+            class FakeResponse:
+                status = 201
+                def __enter__(self):
+                    return self
+                def __exit__(self, *args):
+                    return False
+
+            def fake_urlopen(request, timeout=None):
+                captured["url"] = request.full_url
+                captured["auth"] = request.get_header("Authorization")
+                captured["payload"] = json.loads(request.data.decode())
+                return FakeResponse()
+
+            with unittest.mock.patch("app.urllib.request.urlopen", side_effect=fake_urlopen), \
+                 unittest.mock.patch("app.subprocess.run") as fake_run:
+                response = self.client.post("/v1/reports", json=make_payload())
+            self.assertEqual(200, response.status_code)
+            self.assertEqual("ok", response.json()["github"])
+            self.assertEqual(
+                "https://api.github.com/repos/zlej123/clipnote-reports/issues",
+                captured["url"])
+            self.assertEqual("Bearer test-token", captured["auth"])
+            self.assertTrue(captured["payload"]["title"].startswith("[report:candidates]"))
+            fake_run.assert_not_called()   # 토큰이 gh보다 우선
+        finally:
+            os.environ.pop("CLIPNOTE_REPORTS_REPO", None)
+            os.environ.pop("GITHUB_TOKEN", None)
+
+    def test_token_path_failure_still_ok(self):
+        os.environ["CLIPNOTE_REPORTS_REPO"] = "zlej123/clipnote-reports"
+        os.environ["GITHUB_TOKEN"] = "test-token"
+        try:
+            with unittest.mock.patch(
+                    "app.urllib.request.urlopen",
+                    side_effect=OSError("boom")):
+                response = self.client.post("/v1/reports", json=make_payload())
+            self.assertEqual(200, response.status_code)
+            self.assertEqual("failed", response.json()["github"])
+        finally:
+            os.environ.pop("CLIPNOTE_REPORTS_REPO", None)
+            os.environ.pop("GITHUB_TOKEN", None)
 
 
 if __name__ == "__main__":

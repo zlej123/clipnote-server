@@ -18,6 +18,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
@@ -176,20 +177,41 @@ def _github_issue_payload(entry: dict) -> dict:
             "labels": ["report", f"report:{entry['reason']}"]}
 
 
+def _post_issue_with_token(repo: str, token: str, payload: dict) -> str:
+    request = urllib.request.Request(
+        f"https://api.github.com/repos/{repo}/issues",
+        data=json.dumps(payload).encode(),
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.github+json",
+            "Content-Type": "application/json",
+        },
+        method="POST")
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            return "ok" if 200 <= response.status < 300 else "failed"
+    except Exception:
+        return "failed"
+
+
 def _create_github_issue(entry: dict) -> str:
     """Optional bridge after the JSONL write — never fails the report.
 
-    Uses the local `gh` CLI (caller's keychain auth; no token stored here).
-    Opt-in via CLIPNOTE_REPORTS_REPO (e.g. "zlej123/clipnote-reports").
+    Prefers GITHUB_TOKEN (works on hosted deploys without gh CLI), falls back
+    to the local `gh` CLI, else "skipped". Opt-in via CLIPNOTE_REPORTS_REPO.
     Returns "ok" | "skipped" | "failed".
     """
     repo = os.environ.get("CLIPNOTE_REPORTS_REPO")
     if not repo:
         return "skipped"
+    payload = _github_issue_payload(entry)
+    token = os.environ.get("GITHUB_TOKEN")
+    if token:
+        return _post_issue_with_token(repo, token, payload)
     try:
         result = subprocess.run(
             ["gh", "api", f"repos/{repo}/issues", "--input", "-"],
-            input=json.dumps(_github_issue_payload(entry)).encode(),
+            input=json.dumps(payload).encode(),
             capture_output=True, timeout=15)
         return "ok" if result.returncode == 0 else "failed"
     except (OSError, subprocess.TimeoutExpired):
