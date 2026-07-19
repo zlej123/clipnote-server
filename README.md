@@ -1,12 +1,13 @@
 # clipnote-server
 
-A thin REST API around the [clipnote](https://github.com/zlej123/clipnote) core. The server does analysis only (video → JSON); frame capture happens on the client, from its own player. The server needs no ffmpeg, stores nothing, and — when the client passes `duration` — never contacts YouTube.
+A thin REST API around the [clipnote](https://github.com/zlej123/clipnote) core. The server does analysis only (video → JSON); frame capture happens on the client, from its own player. The server needs no ffmpeg, stores nothing beyond opt-in failure reports, and — when the client passes `duration` — never contacts YouTube.
 
 | Concern | Owner |
 |---------|-------|
 | Video analysis (Gemini) | server `/v1/analyze` |
 | Frame capture | client (Apple app: WKWebView, extension: canvas) |
 | Document assembly | server `/v1/documents`, embedding client image refs |
+| Failure reports | server `/v1/reports` (JSONL, opt-in one-tap) |
 | Cost | the caller's own Gemini key (`X-Gemini-Key` passthrough) |
 
 ## API
@@ -35,6 +36,24 @@ body: {
 → 200 { "markdown", "screenshots", "link_fallbacks" }
 ```
 Guides without an `image_refs` entry fall back to YouTube timestamp links.
+
+### `POST /v1/reports`
+```
+body: {
+  "url": "https://www.youtube.com/watch?v=...",
+  "video_id": "...",
+  "reason": "candidates",       # candidates | guide_text | steps | other
+  "note": "",                   # optional, <= 2000 chars
+  "profile": "generic",
+  "language": "ko",
+  "analysis": { the analysis object being reported on },
+  "picks": { "vg-1": "none" },  # optional, client-side pick state
+  "client": "apple/0.1.0"
+}
+→ 200 { "status": "ok" }
+→ 422 invalid reason / note too long
+```
+Appends one JSONL line (with a server-added `received_at`, UTC ISO8601) to `${CLIPNOTE_REPORTS:-reports}/reports.jsonl`. **This is the only endpoint that stores anything — an explicit exception to the stateless design** (`CLIPNOTE_REPORTS`, default `reports/`), kept for the one-tap failure-case feedback loop.
 
 ## Run
 

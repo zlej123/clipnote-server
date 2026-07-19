@@ -4,6 +4,7 @@
 Design: the server is the shared "brain" only.
 - POST /v1/analyze   — video URL -> validated analysis JSON (steps + visual_guides).
 - POST /v1/documents — analysis (+ optional client-captured image refs) -> markdown.
+- POST /v1/reports    — one-tap issue report (JSONL append; the stateless exception).
 - Frame capture is the client's job (Apple app: WKWebView, extension: canvas),
   so the server needs no ffmpeg and stays stateless.
 - BYOK: the caller sends their own Gemini key in `X-Gemini-Key`; the server
@@ -12,10 +13,13 @@ Design: the server is the shared "brain" only.
 The clipnote core is used as an installed package (`pip install clipnote`),
 with a repo fallback via CLIPNOTE_PATH (default: ../clipnote).
 """
+import json
 import os
 import sys
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Literal
 
 try:
     import clipnote  # noqa: F401  (pip-installed package)
@@ -56,6 +60,19 @@ class DocumentRequest(BaseModel):
     image_refs: dict[str, str] = Field(
         default_factory=dict,
         description="클라이언트가 캡처·호스팅한 이미지 참조 (guide_id -> URL/경로)")
+
+
+class ReportRequest(BaseModel):
+    """One-tap issue report from clients — failure-case corpus for prompt iteration."""
+    url: str
+    video_id: str
+    reason: Literal["candidates", "guide_text", "steps", "other"]
+    note: str = Field(default="", max_length=2000)
+    profile: str = "generic"
+    language: str = "ko"
+    analysis: dict
+    picks: dict[str, str] = Field(default_factory=dict)
+    client: str = ""
 
 
 def require_key(x_gemini_key: str | None) -> str:
@@ -135,6 +152,19 @@ def build_document(req: DocumentRequest):
         "screenshots": sum(1 for guide in guides if guide["has_screenshot"]),
         "link_fallbacks": sum(1 for guide in guides if not guide["has_screenshot"]),
     }
+
+
+@app.post("/v1/reports")
+def submit_report(req: ReportRequest):
+    """Append the report as one JSONL line. The only stateful endpoint —
+    an explicit exception to the stateless design, for the feedback loop."""
+    reports_dir = Path(os.environ.get("CLIPNOTE_REPORTS", "reports"))
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    entry = req.model_dump()
+    entry["received_at"] = datetime.now(timezone.utc).isoformat()
+    with (reports_dir / "reports.jsonl").open("a", encoding="utf-8") as f:
+        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    return {"status": "ok"}
 
 
 def main():
