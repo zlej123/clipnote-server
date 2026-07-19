@@ -79,6 +79,11 @@ python -m unittest discover -s tests   # Gemini stubbed, no network needed
 
 Requires Python 3.10+. Callers must send their own Gemini API key; the server stores none.
 
+## Deploy
+
+To host the report collector so the Apple app's one-tap reports work without user setup,
+see [docs/deploy.md](docs/deploy.md) (Cloud Run, step by step).
+
 ## License
 
 MIT
