@@ -15,6 +15,7 @@ with a repo fallback via CLIPNOTE_PATH (default: ../clipnote).
 """
 import json
 import os
+import subprocess
 import sys
 import tempfile
 from datetime import datetime, timezone
@@ -154,6 +155,47 @@ def build_document(req: DocumentRequest):
     }
 
 
+def _github_issue_payload(entry: dict) -> dict:
+    title = (f"[report:{entry['reason']}] "
+             f"{entry['analysis'].get('title', '(제목 없음)')} ({entry['video_id']})")
+    body = (
+        f"- **사유**: {entry['reason']}\n"
+        f"- **영상**: {entry['url']}\n"
+        f"- **프로파일/언어**: {entry['profile']} / {entry['language']}\n"
+        f"- **client**: {entry['client']}\n"
+        f"- **received_at**: {entry['received_at']}\n\n"
+        f"**메모**\n\n{entry['note'] or '(없음)'}\n\n"
+        "<details><summary>analysis JSON</summary>\n\n```json\n"
+        + json.dumps(entry["analysis"], ensure_ascii=False, indent=2)
+        + "\n```\n\n</details>\n\n"
+        "<details><summary>picks</summary>\n\n```json\n"
+        + json.dumps(entry["picks"], ensure_ascii=False, indent=2)
+        + "\n```\n\n</details>"
+    )
+    return {"title": title, "body": body,
+            "labels": ["report", f"report:{entry['reason']}"]}
+
+
+def _create_github_issue(entry: dict) -> str:
+    """Optional bridge after the JSONL write — never fails the report.
+
+    Uses the local `gh` CLI (caller's keychain auth; no token stored here).
+    Opt-in via CLIPNOTE_REPORTS_REPO (e.g. "zlej123/clipnote-reports").
+    Returns "ok" | "skipped" | "failed".
+    """
+    repo = os.environ.get("CLIPNOTE_REPORTS_REPO")
+    if not repo:
+        return "skipped"
+    try:
+        result = subprocess.run(
+            ["gh", "api", f"repos/{repo}/issues", "--input", "-"],
+            input=json.dumps(_github_issue_payload(entry)).encode(),
+            capture_output=True, timeout=15)
+        return "ok" if result.returncode == 0 else "failed"
+    except (OSError, subprocess.TimeoutExpired):
+        return "failed"
+
+
 @app.post("/v1/reports")
 def submit_report(req: ReportRequest):
     """Append the report as one JSONL line. The only stateful endpoint —
@@ -164,7 +206,7 @@ def submit_report(req: ReportRequest):
     entry["received_at"] = datetime.now(timezone.utc).isoformat()
     with (reports_dir / "reports.jsonl").open("a", encoding="utf-8") as f:
         f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-    return {"status": "ok"}
+    return {"status": "ok", "github": _create_github_issue(entry)}
 
 
 def main():
