@@ -11,11 +11,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/checkout@v4
         with:
-          repository: zlej123/clipnote
-          path: clipnote-core
+          repository: zlej123/stepkeeper
+          path: stepkeeper-core
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - run: pip install -r requirements.txt
-      - run: pip install ./clipnote-core
+      - run: pip install ./stepkeeper-core
       - run: python -m unittest discover -s tests -p "test_*.py" -v

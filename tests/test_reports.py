@@ -32,12 +32,12 @@ def make_payload(**overrides):
 class ReportsEndpointTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        os.environ["CLIPNOTE_REPORTS"] = self.tmp.name
+        os.environ["STEPKEEPER_REPORTS"] = self.tmp.name
         import app  # noqa: WPS433 — env 설정 후 임포트
         self.client = TestClient(app.app)
 
     def tearDown(self):
-        os.environ.pop("CLIPNOTE_REPORTS", None)
+        os.environ.pop("STEPKEEPER_REPORTS", None)
         self.tmp.cleanup()
 
     def test_appends_jsonl_with_received_at(self):
@@ -48,7 +48,7 @@ class ReportsEndpointTests(unittest.TestCase):
         # (see GithubIssueBridgeTests). Verification intent (status ok) is unchanged.
         body = response.json()
         self.assertEqual("ok", body["status"])
-        self.assertEqual("skipped", body["github"])  # CLIPNOTE_REPORTS_REPO unset here
+        self.assertEqual("skipped", body["github"])  # STEPKEEPER_REPORTS_REPO unset here
         path = os.path.join(self.tmp.name, "reports.jsonl")
         with open(path, encoding="utf-8") as f:
             lines = f.readlines()
@@ -74,12 +74,12 @@ class ReportsEndpointTests(unittest.TestCase):
 
 class GithubIssueBridgeTests(unittest.TestCase):
     """Optional bridge: JSONL append still happens; issue creation is opt-in
-    via CLIPNOTE_REPORTS_REPO and must never turn a successful report into a
+    via STEPKEEPER_REPORTS_REPO and must never turn a successful report into a
     non-200 response."""
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        os.environ["CLIPNOTE_REPORTS"] = self.tmp.name
+        os.environ["STEPKEEPER_REPORTS"] = self.tmp.name
         # Defensive: the gh-path tests below assume no token is set, so a leaked
         # GITHUB_TOKEN (e.g. from a CI runner's own auth) can't make them silently
         # take the token path instead of exercising subprocess.run.
@@ -88,14 +88,14 @@ class GithubIssueBridgeTests(unittest.TestCase):
         self.client = TestClient(app.app)
 
     def tearDown(self):
-        os.environ.pop("CLIPNOTE_REPORTS", None)
-        os.environ.pop("CLIPNOTE_REPORTS_REPO", None)
+        os.environ.pop("STEPKEEPER_REPORTS", None)
+        os.environ.pop("STEPKEEPER_REPORTS_REPO", None)
         os.environ.pop("GITHUB_TOKEN", None)
         self.tmp.cleanup()
 
     @patch("app.subprocess.run")
     def test_creates_issue_when_repo_configured(self, mock_run):
-        os.environ["CLIPNOTE_REPORTS_REPO"] = "zlej123/clipnote-reports"
+        os.environ["STEPKEEPER_REPORTS_REPO"] = "zlej123/stepkeeper-reports"
         mock_run.return_value = MagicMock(returncode=0)
 
         response = self.client.post("/v1/reports", json=make_payload())
@@ -110,7 +110,7 @@ class GithubIssueBridgeTests(unittest.TestCase):
 
     @patch("app.subprocess.run")
     def test_skips_issue_when_repo_not_configured(self, mock_run):
-        os.environ.pop("CLIPNOTE_REPORTS_REPO", None)
+        os.environ.pop("STEPKEEPER_REPORTS_REPO", None)
 
         response = self.client.post("/v1/reports", json=make_payload())
 
@@ -120,7 +120,7 @@ class GithubIssueBridgeTests(unittest.TestCase):
 
     @patch("app.subprocess.run")
     def test_failed_issue_creation_keeps_200_and_jsonl(self, mock_run):
-        os.environ["CLIPNOTE_REPORTS_REPO"] = "zlej123/clipnote-reports"
+        os.environ["STEPKEEPER_REPORTS_REPO"] = "zlej123/stepkeeper-reports"
         mock_run.return_value = MagicMock(returncode=1)
 
         response = self.client.post("/v1/reports", json=make_payload())
@@ -133,7 +133,7 @@ class GithubIssueBridgeTests(unittest.TestCase):
 
     @patch("app.subprocess.run")
     def test_issue_creation_timeout_keeps_200(self, mock_run):
-        os.environ["CLIPNOTE_REPORTS_REPO"] = "zlej123/clipnote-reports"
+        os.environ["STEPKEEPER_REPORTS_REPO"] = "zlej123/stepkeeper-reports"
         mock_run.side_effect = subprocess.TimeoutExpired(cmd="gh", timeout=15)
 
         response = self.client.post("/v1/reports", json=make_payload())
@@ -142,7 +142,7 @@ class GithubIssueBridgeTests(unittest.TestCase):
         self.assertEqual("failed", response.json()["github"])
 
     def test_token_path_posts_via_urllib(self):
-        os.environ["CLIPNOTE_REPORTS_REPO"] = "zlej123/clipnote-reports"
+        os.environ["STEPKEEPER_REPORTS_REPO"] = "zlej123/stepkeeper-reports"
         os.environ["GITHUB_TOKEN"] = "test-token"
         try:
             captured = {}
@@ -166,17 +166,17 @@ class GithubIssueBridgeTests(unittest.TestCase):
             self.assertEqual(200, response.status_code)
             self.assertEqual("ok", response.json()["github"])
             self.assertEqual(
-                "https://api.github.com/repos/zlej123/clipnote-reports/issues",
+                "https://api.github.com/repos/zlej123/stepkeeper-reports/issues",
                 captured["url"])
             self.assertEqual("Bearer test-token", captured["auth"])
             self.assertTrue(captured["payload"]["title"].startswith("[report:candidates]"))
             fake_run.assert_not_called()   # 토큰이 gh보다 우선
         finally:
-            os.environ.pop("CLIPNOTE_REPORTS_REPO", None)
+            os.environ.pop("STEPKEEPER_REPORTS_REPO", None)
             os.environ.pop("GITHUB_TOKEN", None)
 
     def test_token_path_failure_still_ok(self):
-        os.environ["CLIPNOTE_REPORTS_REPO"] = "zlej123/clipnote-reports"
+        os.environ["STEPKEEPER_REPORTS_REPO"] = "zlej123/stepkeeper-reports"
         os.environ["GITHUB_TOKEN"] = "test-token"
         try:
             with unittest.mock.patch(
@@ -186,7 +186,7 @@ class GithubIssueBridgeTests(unittest.TestCase):
             self.assertEqual(200, response.status_code)
             self.assertEqual("failed", response.json()["github"])
         finally:
-            os.environ.pop("CLIPNOTE_REPORTS_REPO", None)
+            os.environ.pop("STEPKEEPER_REPORTS_REPO", None)
             os.environ.pop("GITHUB_TOKEN", None)
 
 

@@ -1,6 +1,6 @@
-# clipnote-server
+# stepkeeper-server
 
-A thin REST API around the [clipnote](https://github.com/zlej123/clipnote) core. The server does analysis only (video → JSON); frame capture happens on the client, from its own player. The server needs no ffmpeg, stores nothing beyond opt-in failure reports, and — when the client passes `duration` — never contacts YouTube.
+A thin REST API around the [stepkeeper](https://github.com/zlej123/stepkeeper) core. The server does analysis only (video → JSON); frame capture happens on the client, from its own player. The server needs no ffmpeg, stores nothing beyond opt-in failure reports, and — when the client passes `duration` — never contacts YouTube.
 
 | Concern | Owner |
 |---------|-------|
@@ -53,22 +53,22 @@ body: {
 → 200 { "status": "ok", "github": "ok" | "skipped" | "failed" }
 → 422 invalid reason / note too long
 ```
-Appends one JSONL line (with a server-added `received_at`, UTC ISO8601) to `${CLIPNOTE_REPORTS:-reports}/reports.jsonl`. **This is the only endpoint that stores anything — an explicit exception to the stateless design** (`CLIPNOTE_REPORTS`, default `reports/`), kept for the one-tap failure-case feedback loop.
+Appends one JSONL line (with a server-added `received_at`, UTC ISO8601) to `${STEPKEEPER_REPORTS:-reports}/reports.jsonl`. **This is the only endpoint that stores anything — an explicit exception to the stateless design** (`STEPKEEPER_REPORTS`, default `reports/`), kept for the one-tap failure-case feedback loop.
 
-**GitHub issue bridge (opt-in).** After the JSONL append, the server can also open the report as an issue on a private GitHub repo, via the local `gh` CLI (`gh api repos/<repo>/issues --input -`) — reusing the caller's own `gh` keychain auth, so no token is stored on the server. It only runs when the `CLIPNOTE_REPORTS_REPO` env var is set (e.g. `zlej123/clipnote-reports`); otherwise it's skipped. The response's `github` field reports what happened: `"ok"`, `"skipped"` (env unset), or `"failed"` (`gh` missing/unauthenticated, non-zero exit, or timeout). **Issue creation never fails the report** — the JSONL line is already written by the time this runs, and any bridge error only shows up in the `github` field while the HTTP response stays `200`. On hosted deploys set `GITHUB_TOKEN` (fine-grained, Issues RW on the reports repo) — takes precedence over the gh CLI.
+**GitHub issue bridge (opt-in).** After the JSONL append, the server can also open the report as an issue on a private GitHub repo, via the local `gh` CLI (`gh api repos/<repo>/issues --input -`) — reusing the caller's own `gh` keychain auth, so no token is stored on the server. It only runs when the `STEPKEEPER_REPORTS_REPO` env var is set (e.g. `zlej123/stepkeeper-reports`); otherwise it's skipped. The response's `github` field reports what happened: `"ok"`, `"skipped"` (env unset), or `"failed"` (`gh` missing/unauthenticated, non-zero exit, or timeout). **Issue creation never fails the report** — the JSONL line is already written by the time this runs, and any bridge error only shows up in the `github` field while the HTTP response stays `200`. On hosted deploys set `GITHUB_TOKEN` (fine-grained, Issues RW on the reports repo) — takes precedence over the gh CLI.
 
 ## Run
 
 ```bash
 pip install -r requirements.txt
-pip install "git+https://github.com/zlej123/clipnote"   # or: pip install -e ../clipnote
+pip install "git+https://github.com/zlej123/stepkeeper"   # or: pip install -e ../stepkeeper
 python app.py                             # http://127.0.0.1:8787
 ```
 
 Docker:
 ```bash
-docker build -t clipnote-server .
-docker run -p 8787:8787 clipnote-server
+docker build -t stepkeeper-server .
+docker run -p 8787:8787 stepkeeper-server
 ```
 
 ## Tests

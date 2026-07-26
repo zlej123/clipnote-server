@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""clipnote-server: thin REST wrapper around the clipnote core.
+"""stepkeeper-server: thin REST wrapper around the stepkeeper core.
 
 Design: the server is the shared "brain" only.
 - POST /v1/analyze   — video URL -> validated analysis JSON (steps + visual_guides).
@@ -10,8 +10,8 @@ Design: the server is the shared "brain" only.
 - BYOK: the caller sends their own Gemini key in `X-Gemini-Key`; the server
   never pays for inference and stores nothing.
 
-The clipnote core is used as an installed package (`pip install clipnote`),
-with a repo fallback via CLIPNOTE_PATH (default: ../clipnote).
+The stepkeeper core is used as an installed package (`pip install stepkeeper`),
+with a repo fallback via STEPKEEPER_PATH (default: ../stepkeeper).
 """
 import json
 import os
@@ -24,25 +24,25 @@ from pathlib import Path
 from typing import Literal
 
 try:
-    import clipnote  # noqa: F401  (pip-installed package)
+    import stepkeeper  # noqa: F401  (pip-installed package)
 except ImportError:
-    CLIPNOTE_PATH = Path(os.environ.get(
-        "CLIPNOTE_PATH", Path(__file__).parent.parent / "clipnote")).resolve()
-    if not (CLIPNOTE_PATH / "src" / "clipnote" / "analyze.py").exists():
+    STEPKEEPER_PATH = Path(os.environ.get(
+        "STEPKEEPER_PATH", Path(__file__).parent.parent / "stepkeeper")).resolve()
+    if not (STEPKEEPER_PATH / "src" / "stepkeeper" / "analyze.py").exists():
         raise RuntimeError(
-            f"clipnote package not importable and repo not at {CLIPNOTE_PATH}; "
-            "pip install clipnote or set CLIPNOTE_PATH")
-    sys.path.insert(0, str(CLIPNOTE_PATH / "src"))
+            f"stepkeeper package not importable and repo not at {STEPKEEPER_PATH}; "
+            "pip install stepkeeper or set STEPKEEPER_PATH")
+    sys.path.insert(0, str(STEPKEEPER_PATH / "src"))
 
 from fastapi import FastAPI, Header, HTTPException  # noqa: E402
 from pydantic import BaseModel, Field  # noqa: E402
 
-from clipnote import analyze as core_analyze  # noqa: E402
-from clipnote import render as core_render  # noqa: E402
-from clipnote.common import video_id  # noqa: E402
-from clipnote.contract import validate  # noqa: E402
+from stepkeeper import analyze as core_analyze  # noqa: E402
+from stepkeeper import render as core_render  # noqa: E402
+from stepkeeper.common import video_id  # noqa: E402
+from stepkeeper.contract import validate  # noqa: E402
 
-app = FastAPI(title="clipnote-server", version="0.1.0")
+app = FastAPI(title="stepkeeper-server", version="0.1.0")
 
 
 class AnalyzeRequest(BaseModel):
@@ -85,7 +85,7 @@ def require_key(x_gemini_key: str | None) -> str:
 
 @app.get("/healthz")
 def healthz():
-    import clipnote as core
+    import stepkeeper as core
     return {"status": "ok", "core": str(Path(core.__file__).parent)}
 
 
@@ -198,10 +198,10 @@ def _create_github_issue(entry: dict) -> str:
     """Optional bridge after the JSONL write — never fails the report.
 
     Prefers GITHUB_TOKEN (works on hosted deploys without gh CLI), falls back
-    to the local `gh` CLI, else "skipped". Opt-in via CLIPNOTE_REPORTS_REPO.
+    to the local `gh` CLI, else "skipped". Opt-in via STEPKEEPER_REPORTS_REPO.
     Returns "ok" | "skipped" | "failed".
     """
-    repo = os.environ.get("CLIPNOTE_REPORTS_REPO")
+    repo = os.environ.get("STEPKEEPER_REPORTS_REPO")
     if not repo:
         return "skipped"
     payload = _github_issue_payload(entry)
@@ -222,7 +222,7 @@ def _create_github_issue(entry: dict) -> str:
 def submit_report(req: ReportRequest):
     """Append the report as one JSONL line. The only stateful endpoint —
     an explicit exception to the stateless design, for the feedback loop."""
-    reports_dir = Path(os.environ.get("CLIPNOTE_REPORTS", "reports"))
+    reports_dir = Path(os.environ.get("STEPKEEPER_REPORTS", "reports"))
     reports_dir.mkdir(parents=True, exist_ok=True)
     entry = req.model_dump()
     entry["received_at"] = datetime.now(timezone.utc).isoformat()

@@ -4,7 +4,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends git \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /srv
-RUN pip install --no-cache-dir "git+https://github.com/zlej123/clipnote"
+RUN pip install --no-cache-dir "git+https://github.com/zlej123/stepkeeper"
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
