@@ -9,10 +9,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # 코어는 CORE_REF의 커밋으로 고정 (Dockerfile과 동일 지점 — 재현 가능한 조합)
+      - id: core-ref
+        run: echo "ref=$(cat CORE_REF)" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v4
         with:
           repository: zlej123/stepkeeper
           path: stepkeeper-core
+          ref: ${{ steps.core-ref.outputs.ref }}
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
