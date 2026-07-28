@@ -146,6 +146,7 @@ def analyze_video(req: AnalyzeRequest, x_gemini_key: str | None = Header(default
         raise HTTPException(status_code=502, detail=str(error)[-500:])
 
     data["_duration"] = duration
+    data["_asset_digest"] = core_analyze.asset_digest(req.profile)
     data["_profile"] = req.profile
     data["_output_language"] = req.language
     data["_max_visual_guides"] = req.max_guides
