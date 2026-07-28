@@ -38,6 +38,7 @@ from fastapi import FastAPI, Header, HTTPException  # noqa: E402
 from pydantic import BaseModel, Field  # noqa: E402
 
 from stepkeeper import analyze as core_analyze  # noqa: E402
+from stepkeeper import common as core_common  # noqa: E402
 from stepkeeper import render as core_render  # noqa: E402
 from stepkeeper.common import video_id  # noqa: E402
 from stepkeeper.contract import validate  # noqa: E402
@@ -106,9 +107,12 @@ def analyze_video(req: AnalyzeRequest, x_gemini_key: str | None = Header(default
                 status_code=422,
                 detail="영상 길이를 조회하지 못했습니다. duration을 함께 보내주세요.")
 
-    prompt = core_analyze.load_prompt(
-        req.profile, core_analyze.hms(duration), req.language, req.max_guides)
-    schema = core_analyze.load_schema(req.profile)
+    try:
+        prompt = core_analyze.load_prompt(
+            req.profile, core_analyze.hms(duration), req.language, req.max_guides)
+        schema = core_analyze.load_schema(req.profile)
+    except core_common.UnknownProfileError as error:
+        raise HTTPException(status_code=422, detail=str(error))
     try:
         data = core_analyze.normalize(core_analyze.call_gemini(
             req.url, prompt, req.model, key, schema))
@@ -135,9 +139,11 @@ def build_document(req: DocumentRequest):
     if not profile:
         raise HTTPException(status_code=422, detail="analysis._profile 이 없습니다.")
     try:
-        template = core_render.load_template(profile)
-    except SystemExit:
-        raise HTTPException(status_code=422, detail=f"알 수 없는 프로파일: {profile}")
+        # 문서 뼈대는 분석의 출력 언어를 따른다 — 이 인자를 빠뜨리면 ko/ja 분석도 영어 뼈대가 된다
+        template = core_render.load_template(
+            profile, req.analysis.get("_output_language") or "")
+    except core_common.UnknownProfileError as error:
+        raise HTTPException(status_code=422, detail=str(error))
     body = template.split("\n---\n", 1)[1] if "\n---\n" in template else template
 
     with tempfile.TemporaryDirectory() as temp:

@@ -98,3 +98,37 @@ class DocumentEndpointTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReviewRegressionTests(unittest.TestCase):
+    """외부 리뷰(2026-07-28)에서 실제 요청으로 재현된 두 결함의 회귀 가드."""
+
+    def test_unknown_profile_is_422_not_systemexit(self):
+        # 예전에는 load_prompt의 sys.exit이 FastAPI를 뚫고 나가 SystemExit로 죽었다
+        response = client.post(
+            "/v1/analyze",
+            json={"url": URL, "profile": "no-such-profile", "duration": 30},
+            headers={"X-Gemini-Key": "k"})
+        self.assertEqual(422, response.status_code)
+        self.assertIn("no-such-profile", str(response.json()["detail"]))
+
+    def test_document_scaffolding_follows_output_language(self):
+        # 예전에는 load_template(profile)만 호출해 ko/ja 분석도 영어 뼈대가 됐다
+        analysis = dict(STUB_ANALYSIS)
+        analysis.update({"_profile": "generic", "_output_language": "ko",
+                         "_duration": 30, "_max_visual_guides": 5})
+        response = client.post("/v1/documents", json={
+            "video_id": "GC_Szxdqh2Y", "analysis": analysis, "image_refs": {}})
+        self.assertEqual(200, response.status_code)
+        markdown = response.json()["markdown"]
+        self.assertIn("■ 준비물", markdown)
+        self.assertIn("stepkeeper로 생성", markdown)
+        self.assertNotIn("What you need", markdown)
+
+        analysis["_output_language"] = "en"
+        response = client.post("/v1/documents", json={
+            "video_id": "GC_Szxdqh2Y", "analysis": analysis, "image_refs": {}})
+        self.assertEqual(200, response.status_code)
+        markdown = response.json()["markdown"]
+        self.assertIn("What you need", markdown)
+        self.assertIn("kept with stepkeeper", markdown)
