@@ -2,7 +2,9 @@
 
 앱의 원탭 신고(🚩)를 **일반 사용자가 아무 설정 없이** 쓰게 하려면 이 서버를 한 번 배포해서
 그 주소를 앱에 내장해야 한다. 배포하는 것은 이 저장소(stepkeeper-server) 그대로이고,
-받은 신고는 JSONL로 저장되면서 비공개 저장소 이슈로도 자동 등록된다.
+받은 신고는 JSONL로만 저장된다. GitHub 이슈 등록은 요청 경로에서 하지 않는다 —
+운영자가 `STEPKEEPER_REPORTS_REPO=owner/repo python bridge_reports.py`를 주기적으로 돌려
+배치로 만든다 (공개 요청이 토큰 권한을 직접 구동하지 않도록 분리).
 
 배포 후에도 분석은 앱이 Gemini를 직접 호출한다(서버리스 기본). 이 배포는 **신고 수집 용도**이며,
 서버 모드를 선호하는 사용자를 위한 `/v1/analyze`·`/v1/documents`도 함께 열린다(BYOK 패스스루라 추론 비용은 여전히 호출자 부담).
@@ -50,7 +52,11 @@ gcloud run deploy stepkeeper-reports \
 ```
 
 - `--source .`이면 Dockerfile로 자동 빌드된다(별도 이미지 준비 불필요). 첫 배포는 3~5분.
-- `--allow-unauthenticated`: 앱이 인증 없이 신고를 보낼 수 있어야 하므로 공개 접근. 신고 엔드포인트는 저장만 하고 아무것도 반환하지 않는다.
+- `--allow-unauthenticated`: 앱이 로그인 없이 신고를 보내야 하므로 HTTP 계층은 공개.
+  대신 엔드포인트 자체에 보호 장치가 있다: IP당 시간당 10건 rate limit, analysis 200KB
+  상한, 10분 내 동일 신고 중복 제거, 필드 길이 상한. 추가로 `STEPKEEPER_REPORTS_TOKEN`을
+  설정하면 `X-Report-Token` 헤더가 일치하는 요청만 받는다 (앱에 토큰을 심는 방식이라
+  추출 가능한 약한 인증이지만, 무차별 스팸 비용은 올린다).
 - `asia-northeast3`은 서울 리전. 다른 곳도 무방.
 - 완료되면 `Service URL: https://stepkeeper-reports-xxxxx.a.run.app` 형태의 주소가 출력된다 — **다음 단계에서 쓴다.**
 

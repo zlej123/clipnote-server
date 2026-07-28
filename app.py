@@ -13,11 +13,13 @@ Design: the server is the shared "brain" only.
 The stepkeeper core is used as an installed package (`pip install stepkeeper`),
 with a repo fallback via STEPKEEPER_PATH (default: ../stepkeeper).
 """
+import hashlib
 import json
 import os
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
@@ -34,7 +36,7 @@ except ImportError:
             "pip install stepkeeper or set STEPKEEPER_PATH")
     sys.path.insert(0, str(STEPKEEPER_PATH / "src"))
 
-from fastapi import FastAPI, Header, HTTPException  # noqa: E402
+from fastapi import FastAPI, Header, HTTPException, Request  # noqa: E402
 from pydantic import BaseModel, Field  # noqa: E402
 
 from stepkeeper import analyze as core_analyze  # noqa: E402
@@ -66,16 +68,38 @@ class DocumentRequest(BaseModel):
 
 
 class ReportRequest(BaseModel):
-    """One-tap issue report from clients — failure-case corpus for prompt iteration."""
-    url: str
-    video_id: str
+    """One-tap issue report from clients — failure-case corpus for prompt iteration.
+
+    공개 배포를 전제로 모든 필드에 상한을 둔다 (리뷰 #1) — 무제한 analysis/picks는
+    디스크·대역폭 소진 경로였다.
+    """
+    url: str = Field(max_length=500)
+    video_id: str = Field(max_length=20)
     reason: Literal["candidates", "guide_text", "steps", "other"]
     note: str = Field(default="", max_length=2000)
-    profile: str = "generic"
-    language: str = "ko"
+    profile: str = Field(default="generic", max_length=40)
+    language: str = Field(default="ko", max_length=40)
     analysis: dict
     picks: dict[str, str] = Field(default_factory=dict)
-    client: str = ""
+    client: str = Field(default="", max_length=100)
+
+
+# 신고 엔드포인트 보호 장치 (모두 인메모리 — 서버 재시작 시 초기화되는 best-effort.
+# reports 저장과 같은 "stateless 예외" 항목이며, 완전한 보호가 아니라 남용 비용을 올리는 장치다)
+REPORT_MAX_ANALYSIS_BYTES = 200_000
+REPORT_MAX_PICKS = 100
+REPORT_RATE_LIMIT = 10          # IP당 시간당
+REPORT_RATE_WINDOW = 3600.0
+REPORT_DEDUP_WINDOW = 600.0
+_report_hits: dict[str, list] = {}
+_report_seen: dict[str, float] = {}
+
+
+def _client_ip(request) -> str:
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
 
 
 def require_key(x_gemini_key: str | None) -> str:
@@ -162,79 +186,49 @@ def build_document(req: DocumentRequest):
     }
 
 
-def _github_issue_payload(entry: dict) -> dict:
-    title = (f"[report:{entry['reason']}] "
-             f"{entry['analysis'].get('title', '(제목 없음)')} ({entry['video_id']})")
-    body = (
-        f"- **사유**: {entry['reason']}\n"
-        f"- **영상**: {entry['url']}\n"
-        f"- **프로파일/언어**: {entry['profile']} / {entry['language']}\n"
-        f"- **client**: {entry['client']}\n"
-        f"- **received_at**: {entry['received_at']}\n\n"
-        f"**메모**\n\n{entry['note'] or '(없음)'}\n\n"
-        "<details><summary>analysis JSON</summary>\n\n```json\n"
-        + json.dumps(entry["analysis"], ensure_ascii=False, indent=2)
-        + "\n```\n\n</details>\n\n"
-        "<details><summary>picks</summary>\n\n```json\n"
-        + json.dumps(entry["picks"], ensure_ascii=False, indent=2)
-        + "\n```\n\n</details>"
-    )
-    return {"title": title, "body": body,
-            "labels": ["report", f"report:{entry['reason']}"]}
-
-
-def _post_issue_with_token(repo: str, token: str, payload: dict) -> str:
-    request = urllib.request.Request(
-        f"https://api.github.com/repos/{repo}/issues",
-        data=json.dumps(payload).encode(),
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/vnd.github+json",
-            "Content-Type": "application/json",
-        },
-        method="POST")
-    try:
-        with urllib.request.urlopen(request, timeout=15) as response:
-            return "ok" if 200 <= response.status < 300 else "failed"
-    except Exception:
-        return "failed"
-
-
-def _create_github_issue(entry: dict) -> str:
-    """Optional bridge after the JSONL write — never fails the report.
-
-    Prefers GITHUB_TOKEN (works on hosted deploys without gh CLI), falls back
-    to the local `gh` CLI, else "skipped". Opt-in via STEPKEEPER_REPORTS_REPO.
-    Returns "ok" | "skipped" | "failed".
-    """
-    repo = os.environ.get("STEPKEEPER_REPORTS_REPO")
-    if not repo:
-        return "skipped"
-    payload = _github_issue_payload(entry)
-    token = os.environ.get("GITHUB_TOKEN")
-    if token:
-        return _post_issue_with_token(repo, token, payload)
-    try:
-        result = subprocess.run(
-            ["gh", "api", f"repos/{repo}/issues", "--input", "-"],
-            input=json.dumps(payload).encode(),
-            capture_output=True, timeout=15)
-        return "ok" if result.returncode == 0 else "failed"
-    except (OSError, subprocess.TimeoutExpired):
-        return "failed"
-
-
 @app.post("/v1/reports")
-def submit_report(req: ReportRequest):
+def submit_report(req: ReportRequest, request: Request,
+                  x_report_token: str | None = Header(default=None)):
     """Append the report as one JSONL line. The only stateful endpoint —
-    an explicit exception to the stateless design, for the feedback loop."""
+    an explicit exception to the stateless design, for the feedback loop.
+
+    GitHub 이슈 생성은 이 경로에서 하지 않는다 (리뷰 #1: 공개 요청이 토큰 권한을 직접
+    구동하면 안 된다) — bridge_reports.py를 별도로 돌려 JSONL에서 배치로 만든다.
+    """
+    expected = os.environ.get("STEPKEEPER_REPORTS_TOKEN")
+    if expected and x_report_token != expected:
+        raise HTTPException(status_code=401, detail="X-Report-Token이 올바르지 않습니다.")
+
+    now = time.monotonic()
+    ip = _client_ip(request)
+    hits = [t for t in _report_hits.get(ip, []) if now - t < REPORT_RATE_WINDOW]
+    if len(hits) >= REPORT_RATE_LIMIT:
+        raise HTTPException(status_code=429, detail="신고 한도 초과 — 잠시 후 다시 시도하세요.")
+    hits.append(now)
+    _report_hits[ip] = hits
+
+    if len(req.picks) > REPORT_MAX_PICKS:
+        raise HTTPException(status_code=413, detail="picks가 너무 많습니다.")
+    analysis_bytes = len(json.dumps(req.analysis, ensure_ascii=False).encode())
+    if analysis_bytes > REPORT_MAX_ANALYSIS_BYTES:
+        raise HTTPException(status_code=413, detail="analysis가 너무 큽니다 (200KB 제한).")
+
+    digest = hashlib.sha256(
+        f"{req.video_id}|{req.reason}|{req.note}|{req.client}".encode()).hexdigest()
+    for key, ts in list(_report_seen.items()):
+        if now - ts > REPORT_DEDUP_WINDOW:
+            del _report_seen[key]
+    if digest in _report_seen:
+        return {"status": "duplicate"}
+    _report_seen[digest] = now
+
     reports_dir = Path(os.environ.get("STEPKEEPER_REPORTS", "reports"))
     reports_dir.mkdir(parents=True, exist_ok=True)
     entry = req.model_dump()
     entry["received_at"] = datetime.now(timezone.utc).isoformat()
     with (reports_dir / "reports.jsonl").open("a", encoding="utf-8") as f:
         f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-    return {"status": "ok", "github": _create_github_issue(entry)}
+    return {"status": "ok"}
 
 
 def main():
