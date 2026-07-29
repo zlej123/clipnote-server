@@ -132,3 +132,45 @@ class ReviewRegressionTests(unittest.TestCase):
         markdown = response.json()["markdown"]
         self.assertIn("What you need", markdown)
         self.assertIn("kept with stepkeeper", markdown)
+
+
+class PublicHardeningTests(unittest.TestCase):
+    """외부 리뷰 3차 P1: 공개 배포에서 분석·문서 렌더 표면 보호."""
+
+    def setUp(self):
+        import app as server_module
+        self.server = server_module
+        server_module._report_hits.clear()
+
+    def tearDown(self):
+        import os
+        os.environ.pop("STEPKEEPER_REPORTS_ONLY", None)
+
+    def _document_payload(self, analysis=None):
+        payload = dict(STUB_ANALYSIS)
+        payload.update({"_profile": "generic", "_output_language": "ko",
+                        "_duration": 30, "_max_visual_guides": 5})
+        if analysis:
+            payload.update(analysis)
+        return {"video_id": "GC_Szxdqh2Y", "analysis": payload, "image_refs": {}}
+
+    def test_documents_rejects_oversized_analysis(self):
+        big = self._document_payload({"blob": "가" * self.server.REPORT_MAX_ANALYSIS_BYTES})
+        response = client.post("/v1/documents", json=big)
+        self.assertEqual(413, response.status_code)
+
+    def test_documents_rate_limited(self):
+        payload = self._document_payload()
+        for _ in range(self.server.COMPUTE_RATE_LIMIT):
+            response = client.post("/v1/documents", json=payload)
+            self.assertEqual(200, response.status_code)
+        self.assertEqual(429, client.post("/v1/documents", json=payload).status_code)
+
+    def test_reports_only_mode_disables_compute_endpoints(self):
+        import os
+        os.environ["STEPKEEPER_REPORTS_ONLY"] = "1"
+        self.assertEqual(404, client.post(
+            "/v1/documents", json=self._document_payload()).status_code)
+        self.assertEqual(404, client.post(
+            "/v1/analyze", json={"url": URL, "duration": 30},
+            headers={"X-Gemini-Key": "k"}).status_code)

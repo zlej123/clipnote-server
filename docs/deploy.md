@@ -52,6 +52,13 @@ gcloud run deploy stepkeeper-reports \
 ```
 
 - `--source .`이면 Dockerfile로 자동 빌드된다(별도 이미지 준비 불필요). 첫 배포는 3~5분.
+- **주의 — Cloud Run 파일시스템은 휘발성이다.** JSONL은 인스턴스 재시작 시 사라진다.
+  신고를 실제로 보존하려면 둘 중 하나가 필요하다:
+  ① `STEPKEEPER_REPORTS`를 마운트한 영속 볼륨(GCS FUSE 등)으로 지정, 또는
+  ② `bridge_reports.py`를 짧은 주기(cron/Cloud Scheduler)로 돌려 GitHub 이슈로 옮기기.
+  이 중 하나를 갖추기 전까지 "신고 전송 성공" 응답은 영속을 보장하지 않는다.
+- **신고 수집 전용 배포에는 `STEPKEEPER_REPORTS_ONLY=1`을 설정하라.** 분석·문서 렌더
+  엔드포인트가 꺼져(404) 무인증 공개 표면이 신고 수집 하나로 줄어든다.
 - `--allow-unauthenticated`: 앱이 로그인 없이 신고를 보내야 하므로 HTTP 계층은 공개.
   대신 엔드포인트 자체에 보호 장치가 있다: IP당 시간당 10건 rate limit, analysis 200KB
   상한, 10분 내 동일 신고 중복 제거, 필드 길이 상한. 추가로 `STEPKEEPER_REPORTS_TOKEN`을
