@@ -95,6 +95,34 @@ _report_hits: dict[str, list] = {}
 _report_seen: dict[str, float] = {}
 
 
+# 분석·문서 렌더는 신고보다 비용이 크지만 정상 사용 빈도도 높다 — 별도 한도
+COMPUTE_RATE_LIMIT = 30         # IP당 시간당 (analyze+documents 합산)
+
+
+def _enforce_rate(request, bucket: str, limit: int):
+    now = time.monotonic()
+    key = f"{bucket}:{_client_ip(request)}"
+    hits = [t for t in _report_hits.get(key, []) if now - t < REPORT_RATE_WINDOW]
+    if len(hits) >= limit:
+        raise HTTPException(status_code=429, detail="요청 한도 초과 — 잠시 후 다시 시도하세요.")
+    hits.append(now)
+    _report_hits[key] = hits
+
+
+def _enforce_analysis_size(analysis: dict):
+    if len(json.dumps(analysis, ensure_ascii=False).encode()) > REPORT_MAX_ANALYSIS_BYTES:
+        raise HTTPException(status_code=413, detail="analysis가 너무 큽니다 (200KB 제한).")
+
+
+def _reports_only_guard():
+    """신고 수집기 전용 배포(STEPKEEPER_REPORTS_ONLY=1)에서는 분석·문서 엔드포인트를 끈다.
+
+    공개 신고 수집기에 무인증 렌더/분석 표면까지 같이 열 이유가 없다 (외부 리뷰 P1).
+    """
+    if os.environ.get("STEPKEEPER_REPORTS_ONLY") == "1":
+        raise HTTPException(status_code=404, detail="이 배포는 신고 수집 전용입니다.")
+
+
 def _client_ip(request) -> str:
     forwarded = request.headers.get("x-forwarded-for")
     if forwarded:
@@ -115,7 +143,10 @@ def healthz():
 
 
 @app.post("/v1/analyze")
-def analyze_video(req: AnalyzeRequest, x_gemini_key: str | None = Header(default=None)):
+def analyze_video(req: AnalyzeRequest, request: Request,
+                  x_gemini_key: str | None = Header(default=None)):
+    _reports_only_guard()
+    _enforce_rate(request, "compute", COMPUTE_RATE_LIMIT)
     key = require_key(x_gemini_key)
     try:
         vid = video_id(req.url)
@@ -159,7 +190,12 @@ def analyze_video(req: AnalyzeRequest, x_gemini_key: str | None = Header(default
 
 
 @app.post("/v1/documents")
-def build_document(req: DocumentRequest):
+def build_document(req: DocumentRequest, request: Request):
+    _reports_only_guard()
+    _enforce_rate(request, "compute", COMPUTE_RATE_LIMIT)
+    _enforce_analysis_size(req.analysis)
+    if len(req.image_refs) > REPORT_MAX_PICKS:
+        raise HTTPException(status_code=413, detail="image_refs가 너무 많습니다.")
     profile = req.analysis.get("_profile")
     if not profile:
         raise HTTPException(status_code=422, detail="analysis._profile 이 없습니다.")

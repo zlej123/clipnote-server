@@ -13,7 +13,7 @@ RUN pip install --no-cache-dir "git+https://github.com/zlej123/stepkeeper@$(cat 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY app.py .
+COPY app.py bridge_reports.py .
 
 ENV HOST=0.0.0.0 PORT=8787
 EXPOSE 8787
